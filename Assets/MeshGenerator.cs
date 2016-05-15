@@ -6,14 +6,98 @@ using System.Collections;
 public class MeshGenerator : MonoBehaviour {
 
     public SquareGrid squareGrid;
+    List<Vector3> vertices;
+    List<int> triangles;
 
     public void GenerateMesh(int[,] map, float squareSize)
     {
         squareGrid = new SquareGrid(map, squareSize);
+
+        vertices = new List<Vector3>();
+        triangles = new List<int>();
+
+        foreach(Square square in squareGrid)
+        {
+            TriangulateSquare(square);
+        }
+
+        Mesh mesh = new Mesh();
+        GetComponent<MeshFilter>().mesh = mesh;
+
+        mesh.vertices = vertices.ToArray();
+        mesh.triangles = triangles.ToArray();
+        mesh.RecalculateNormals();
+    }
+
+    void TriangulateSquare(Square square)
+    {
+        bool previousActive = false;
+        Node prevMidNode = null;
+        List<Node> points = new List<Node>();
+
+        // now loop through the rest following our algorithm
+        foreach(Node current in square.EnumerateNodesForTriangles())
+        {
+            if(current is ControlNode)
+            {
+                ControlNode control = (ControlNode)current;
+                
+                // prevMidNode will only be null on the first point (topLeft)
+                if(prevMidNode != null && control.active != previousActive)
+                {
+                    // if we've changed active state since our last control node, add our 
+                    // most recent midpoint, otherwise we don't have to (it's included automatically)
+                    points.Add(prevMidNode);
+                }
+
+                if (control.active)
+                {
+                    points.Add(current);
+                }
+
+                previousActive = control.active;
+            } else
+            {
+                prevMidNode = current;
+            }
+        }
+
+        MeshFromPoints(points.ToArray());
+    }
+
+    void MeshFromPoints(Node[] points)
+    {
+        AssignVertices(points);
+
+        for(int pointIndex = 2; pointIndex < points.Length; pointIndex++)
+        {
+            CreateTriangle(points[0], points[pointIndex - 1], points[pointIndex]);
+        }
+    }
+
+    void AssignVertices(Node[] points)
+    {
+        foreach(Node node in points)
+        {
+            if(node.vertexIndex == -1)
+            {
+                // this vertex index hasn't already been assigned
+                node.vertexIndex = vertices.Count;
+                vertices.Add(node.position);
+            }
+        }
+    }
+
+    void CreateTriangle(Node a, Node b, Node c)
+    {
+        triangles.Add(a.vertexIndex);
+        triangles.Add(b.vertexIndex);
+        triangles.Add(c.vertexIndex);
     }
 
     void OnDrawGizmos()
     {
+        /*
         if(squareGrid != null)
         {
             foreach(Square square in squareGrid)
@@ -32,6 +116,7 @@ public class MeshGenerator : MonoBehaviour {
                 }
             }
         }
+        */
     }
 
     public class SquareGrid : IEnumerable<Square>
@@ -92,6 +177,7 @@ public class MeshGenerator : MonoBehaviour {
     {
         public ControlNode topLeft, topRight, bottomRight, bottomLeft;
         public Node centerTop, centerRight, centerBottom, centerLeft;
+        public NodeIteratorForTriangles triangleIterator;
 
         public Square(ControlNode _topLeft, ControlNode _topRight, ControlNode _bottomRight, ControlNode _bottomLeft)
         {
@@ -104,6 +190,13 @@ public class MeshGenerator : MonoBehaviour {
             centerRight = _bottomRight.aboveNode;
             centerBottom = _bottomLeft.rightNode;
             centerLeft = bottomLeft.aboveNode;
+
+            triangleIterator = new NodeIteratorForTriangles(this);
+        }
+
+        public IEnumerable<Node> EnumerateNodesForTriangles()
+        {
+            return triangleIterator;
         }
 
         private IEnumerable<ControlNode> ControlNodes()
@@ -138,7 +231,43 @@ public class MeshGenerator : MonoBehaviour {
         }
     }
 
-	public class Node
+    public class NodeIteratorForTriangles : IEnumerable<Node>
+    {
+        Square mySquare;
+
+        public NodeIteratorForTriangles(Square square)
+        {
+            mySquare = square;
+        }
+
+        private IEnumerable<Node> AllNodesForTriangles()
+        {
+            yield return mySquare.topLeft;
+            yield return mySquare.centerTop;
+            yield return mySquare.topRight;
+            yield return mySquare.centerRight;
+            yield return mySquare.bottomRight;
+            yield return mySquare.centerBottom;
+            yield return mySquare.bottomLeft;
+            yield return mySquare.centerLeft;
+            // this is included again, so that we can use our algorithm 
+            // and get all control points. otherwise we would skip center left.
+            yield return mySquare.topLeft;
+        }
+
+        public IEnumerator<Node> GetEnumerator()
+        {
+            return AllNodesForTriangles().GetEnumerator();
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return AllNodesForTriangles().GetEnumerator();
+        }
+    }
+
+
+    public class Node
     {
         public Vector3 position;
         public int vertexIndex = -1;
